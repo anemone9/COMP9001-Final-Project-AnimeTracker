@@ -21,7 +21,7 @@ class Anime:
     def __init__(self, title, year=None, genres=None, status="planned", rating=None):
         self.title = title.strip()
         self.year = int(year) if year else None
-        self.genres = [g.strip() for g in (genres or []) if g.strip()]
+        self.genres = [g.strip().capitalize() for g in (genres or []) if g.strip()]
         self.status = status.strip().lower() if status else "planned"
         # rating should be an integer between 0 and 5
         self.rating = int(rating) if (str(rating).isdigit()) and 0 <= int(rating) <= 5 else None
@@ -108,6 +108,30 @@ class AnimeTracker:
         messagebox.showwarning("Warning", "Anime not found.")
         return False
     
+    def update_anime(self, original_title: str, updated_anime: Anime):
+        """Update an existing anime entry."""
+        target_index = -1
+        for i, a in enumerate(self.animes):
+            if a.title.lower() == original_title.lower():
+                target_index = i
+                break
+
+        if target_index == -1:
+            messagebox.showerror("Error", f"Could not find '{original_title}' to update.")
+            return False
+
+        # if the title is changed, check whether the new title conflicts with *another* entry.
+        new_title_lower = updated_anime.title.lower()
+        if original_title.lower() != new_title_lower:
+            for i, a in enumerate(self.animes):
+                if a.title.lower() == new_title_lower and i != target_index:
+                    messagebox.showwarning("Warning", f"Another anime with the title '{updated_anime.title}' already exists.")
+                    return False
+        
+        # replace the former entry
+        self.animes[target_index] = updated_anime
+        self.save()
+        return True
 
     # -----------------------------------------------------------------------
     # Search / statistics / recommendation
@@ -176,20 +200,22 @@ class AnimeTrackerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AnimeTracker - GUI")
-        self.geometry("1000x650")
-        self.minsize(950, 650) # minimum size can see 'delete' button
+        self.geometry("1200x650")
+        self.minsize(1100, 650) # minimum size can see 'delete' button
 
         self.tracker = AnimeTracker()
         self._sort_state = {"col": "title", "reverse": False}
-
+        self.currently_editing_title = None
+        
         # header label
         header_frame = ttk.Frame(self)
         header_frame.pack(fill="x", pady=(8, 0))
         header_label = ttk.Label(
             header_frame,
             text="🌸 AnimeTracker 🌸",
-            font=("Helvetica", 22, "bold"),
-            foreground="#ff69b4",
+            font=("Segoe Script", 26, "bold"),
+            foreground="#89cff0",
+            background="#fafafa",
             anchor="center",
         )
         header_label.pack(fill="x")
@@ -230,7 +256,8 @@ class AnimeTrackerGUI(tk.Tk):
                      width=8, state="readonly").grid(row=1, column=4, padx=(0, 10))
 
         ttk.Button(frm, text="Add", command=self.on_add).grid(row=1, column=5, padx=(0, 6))
-        ttk.Button(frm, text="Delete", command=self.on_delete).grid(row=1, column=6)
+        ttk.Button(frm, text="Update", command=self.on_update).grid(row=1, column=6, padx=(0, 6))
+        ttk.Button(frm, text="Delete", command=self.on_delete).grid(row=1, column=7)
 
     def _build_toolbar(self):
         """Create the toolbar for search, refresh, stats, and recommendation."""
@@ -320,13 +347,14 @@ class AnimeTrackerGUI(tk.Tk):
     # --------------------------- event handlers ---------------------------
     def on_add(self):
         """Handle Add button click."""
+        # check valid inputs
         title = self.var_title.get().strip()
         if not title:
             messagebox.showinfo("Info", "Title cannot be empty.")
             return
 
         year = self.var_year.get().strip()
-        genres = [g.strip() for g in self.var_genres.get().split(",") if g.strip()]
+        genres = [g.strip().capitalize() for g in self.var_genres.get().split(",") if g.strip()]
         status = self.var_status.get().strip().lower() or "planned"
         rating = self.var_rating.get().strip()
         rating = int(rating) if rating.isdigit() else None
@@ -351,7 +379,49 @@ class AnimeTrackerGUI(tk.Tk):
         self.var_genres.set("")
         self.var_status.set(VALID_STATUS[0])
         self.var_rating.set("")
+        self.currently_editing_title = None
         messagebox.showinfo("Success", "Anime added successfully.")
+
+    def on_update(self):
+        """Handle Update button click."""
+        original_title = self.currently_editing_title
+        if not original_title:
+            messagebox.showinfo("Info", "Please double-click an anime to load it into the form before updating.")
+            return
+
+        title = self.var_title.get().strip()
+        if not title:
+            messagebox.showinfo("Info", "Title cannot be empty.")
+            return
+
+        year = self.var_year.get().strip()
+        genres = [g.strip().capitalize() for g in self.var_genres.get().split(",") if g.strip()]
+        status = self.var_status.get().strip().lower() or "planned"
+        rating = self.var_rating.get().strip()
+        rating = int(rating) if rating.isdigit() else None
+
+        if status not in VALID_STATUS:
+            messagebox.showwarning("Warning", f"Status must be one of {', '.join(VALID_STATUS)}.")
+            return
+        try:
+            y = int(year) if year else None
+        except ValueError:
+            messagebox.showwarning("Warning", "Year must be an integer or blank.")
+            return
+
+        updated_anime = Anime(title, y, genres, status, rating)
+        ok = self.tracker.update_anime(original_title, updated_anime)
+
+        if ok:
+            # clear form and refresh
+            self.on_refresh()
+            self.var_title.set("")
+            self.var_year.set("")
+            self.var_genres.set("")
+            self.var_status.set(VALID_STATUS[0])
+            self.var_rating.set("")
+            self.currently_editing_title = None # clear editing state
+            messagebox.showinfo("Success", "Anime updated successfully.")
 
     def on_delete(self):
         """Handle Delete button click."""
@@ -365,6 +435,7 @@ class AnimeTrackerGUI(tk.Tk):
         ok = self.tracker.delete_by_title(title)
         if ok:
             self.on_refresh()
+            self.currently_editing_title = None
             messagebox.showinfo("Deleted", "Anime deleted.")
         else:
             messagebox.showinfo("Info", "Title not found.")
@@ -417,6 +488,8 @@ class AnimeTrackerGUI(tk.Tk):
         self.var_genres.set(genres)
         self.var_status.set(status)
         self.var_rating.set("" if str(rating).strip() == "" else str(rating))
+
+        self.currently_editing_title = title
 
 # ---------------------------------------------------------------------------
 # Run the application
